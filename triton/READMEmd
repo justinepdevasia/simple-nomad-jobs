@@ -1,0 +1,5 @@
+- requirements for running triton server in nomad
+
+1. nvidia gpu
+2. cuda installed
+3. Nomad - https://developer.hashicorp.com/nomad/plugins/devices/nvidia

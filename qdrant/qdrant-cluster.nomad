@@ -8,8 +8,8 @@ job "qdrant" {
     healthy_deadline  = "3m"
     progress_deadline = "5m"
   }
-  group "qdrant-cluster" {
-    count = 3
+  group "qdrant-primary" {
+    count = 1
     restart {
       attempts = 3
       interval = "5m"
@@ -21,42 +21,93 @@ job "qdrant" {
       port "qdrant" {
         to = 6333 
       }
+      port "cluster" {
+        to = 6335
+        static = 6335
+      }
     }
 
     task "qdrant" {
       driver = "docker"
       config {
         image = "qdrant/qdrant:v1.6.1"
-        args = [
-          "-config.file",
-          "local/config.yml",
+        ports = ["qdrant", "cluster"]
+        command = "./qdrant"
+         args = [
+          "--uri", 
+          "${NOMAD_HOST_ADDR_cluster}",
         ]
-        ports = ["qdrant"]
-      }
-      template {
-        data        = file(abspath("./configs/config.tpl.yml"))
-        destination = "local/config.yml"
-        change_mode = "restart"
       }
       resources {
         cpu    = 800
         memory = 500
       }
+      env {
+        QDRANT__CLUSTER__ENABLED=true
+      }
       service {
-        name = "qdrant"
+        name = "qdrant-primary"
+        port = "cluster"
+      }
+    }
+  }
+  group "qdrant-cluster" {
+    count = 2
+    restart {
+      attempts = 3
+      interval = "5m"
+      delay    = "25s"
+      mode     = "delay"
+    }
+    network {
+      mode = "host"
+      port "qdrant" {
+        to = 6333 
+      }
+      port "cluster" {
+        to = 6335
+      }
+    }
+
+    task "qdrant" {
+      driver = "docker"
+      config {
+        image = "qdrant/qdrant:v1.6.1"
+        ports = ["qdrant"]
+        command = "./qdrant"
+         args = [
+          "--bootstrap", 
+          "http://192.168.1.76:6335",
+          "--uri", 
+          "${NOMAD_HOST_ADDR_cluster}",
+        ]
+      }
+      resources {
+        cpu    = 800
+        memory = 500
+      }
+      env {
+        QDRANT__CLUSTER__ENABLED=true
+      }
+
+      template {
+        destination = "local/qdrant.env"
+        env         = true
+        data = <<EOH
+        QDRANT_PRIMARY_ADDRESS=http://{{ range service "qdrant-primary" }}{{ .Address }}:{{ .Port }}{{ end }}
+        EOH
+      }
+
+      service {
+        name = "qdrant-cluster"
         port = "qdrant"
         check {
           name     = "qdrant healthcheck"
           port     = "qdrant"
           type     = "http"
-          path     = "/ready"
+          path     = "/healthz"
           interval = "20s"
           timeout  = "5s"
-          check_restart {
-            limit           = 3
-            grace           = "60s"
-            ignore_warnings = false
-          }
         }
       }
     }
